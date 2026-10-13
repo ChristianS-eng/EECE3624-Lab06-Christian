@@ -3,8 +3,8 @@
  *
  * Created: 10/4/2022 9:16:57 AM
  * Initial Coder: jfhutton
- * Current Coder: <TBD>
- * Modified:      <TBD>
+ * Current Coder: Christian Sorensen
+ * Modified:      10/12/2026
  *
  * This lab uses hardware LEDs wired to PORTA, an interrupt from the joystick center
  * button, and a timer interrupt to build a game loop program that can display 
@@ -17,28 +17,32 @@
  */ 
 
 #include <avr/io.h>              // Needed for AVR IO defines
-#include <avr/interrupt.h>       // Needed for AVR interupt devines
+#include <avr/interrupt.h>       // Needed for AVR interrupt devices
 
 #define LEDS            PORTA    // alias PORTA
 
 	
 // global variables for communication between ISRs and main
 const unsigned char TCNT0_COUNT_SET = 0x8E;// Count for 1ms loop (Provided by Prof Hutton)
-// <TBD> Your global variables should go here
+
+volatile enum Mode {
+	zero,
+	one,
+	two,
+	three,
+} mode;
+
+volatile enum Mode mode = zero;  
+volatile int tick = 0;
+volatile int next_led;
+volatile int lock = 1;
+volatile int sub_pattern_1 = 1;
+volatile int sub_pattern_2 = 0;
 
 int main(void){
-	// Variables for main
-	// <TBD> Your local main variables should go here
-	
-	// State machine initialization.
-	
-	// Initialization for LEDs
-	// Set direction for A ports.
-	// (Prof Note:  This is similar to our two line assembly commands.)
 	
 	DDRA = 0xFF;  // Set the Direction for all PORTA pints to be outputs
 	LEDS = 0xFF;  // Set the PORTA for all pins to be high (i.e. OFF)
-	//LEDS = 0x00;  // TEST - Set all PORTA pins to be low (i.e. ON)
 	
 	// Initialization for Timer Interrupt
 	// With a 7.3MHz crystal we have a 0.137us period
@@ -53,31 +57,98 @@ int main(void){
 	// (Prof Note Two:  You will need to show your own calculations in the 
 	//  Lab Report to verify the TCNT0_COUNT_SET value!)
 	
-	//TCCR0 = (1<<CS02);
-	//TCNT0 = TCNT0_COUNT_SET;
-	//TIMSK = (1<<TOIE0);
+	TCCR0 = (1<<CS02);
+	TCNT0 = TCNT0_COUNT_SET;
+	TIMSK = (1<<TOIE0);
 	
 	// Port Initialization
-	// Using the LED PORTA initilization above and your Lab05 code, 
+	// Using the LED PORTA initialization above and your Lab05 code, 
 	// Configure the joystick button.
 	// (Prof Note: you will need to add another jumper wire, or 
 	// change the ones you have, to get the center button working!
 	
-	// <TBD>  Student code here
+	DDRB = 0x00;	// Set Port B to be input
+	PORTB = 0x10;	// Pin 4 (joystick pushbutton)
 	
 	// Interrupt Enable Block
 	// Using your Lab05 code, you will need to update these
 	// lines from 0x00 to have the appropriate mask.
-	EICRA = 0x00;  // <TBD> Needs to be updated!
-	EIMSK = 0x00;  // <TBD> Needs to be updated!
+	
+	EICRA = (1 << ISC01) | (1 << ISC00); // Trigger INT0 on the falling edge
+	EIMSK = (1 << INT0);				 // Enable INT0
+
 	// Enable Global Interrupts
 	sei();
 	
 	// Main Loop
 	while (1) {
-		// Your game loop will go here.
 		
-		// <TBD>  Game Loop
+	while(1) {
+		
+		while (tick != 50) {}	// Stall for 50 mS
+			
+		tick = 0;	
+		
+		if (mode == zero) {
+			PORTA = ~(1 << next_led);
+			next_led = (next_led + 1) % 8;			
+		}
+		
+		if (mode == one) {	
+			PORTA = ~(1 << next_led);
+			next_led--;
+			if (next_led == -1)
+				next_led = 7;	
+		}
+		
+		if (mode == two) {
+			PORTA = ~(1 << next_led);
+			
+			if (0 <= next_led && next_led < 7 && lock)
+				next_led++;
+			else {
+				next_led--;
+				lock = 0;
+				if (next_led == 0)
+					lock = 1;
+			}
+		}
+		
+		if (mode == three) {
+			if (sub_pattern_1) {
+				LEDS ^= (1<<next_led) | (1<<(7-next_led));
+				next_led++;
+				
+				if (next_led == 4) {
+					next_led = 0;
+					lock = 0;
+				}	
+				
+				if (LEDS == 0xFF) {
+					sub_pattern_1 = 0;
+					sub_pattern_2 = 1;	
+					next_led = 3;
+				}	
+			}
+			
+			if (sub_pattern_2) {
+				LEDS ^= ((1<<next_led) | (1<<(7-next_led)));				
+				next_led--;
+				
+				if (next_led == -1) {
+					next_led = 3;
+					lock = 0;
+				}
+					
+				if (LEDS == 0xFF) {
+					sub_pattern_1 = 1;
+					sub_pattern_2 = 0;	
+					next_led = 0;
+				}	
+			}
+		}
+	}
+		
 		
 	}
 }
@@ -85,18 +156,40 @@ int main(void){
 // This is the required format of an ISR routine for a 
 // Timer.  Your ISR code should go inside
 // (Prof Note:  When you define this correctly, the JUMP TABLE
-//  will be properly updated by the compiler.  (Thank you 
-ISR(TIMER0_OVF_vect){
-	
-	// <TBD>  ISR code for timer interrupt.
-	
+//  will be properly updated by the compiler.  (Thank you!) 
+ISR(TIMER0_OVF_vect) {
+	tick++;
+	TCNT1 = 0x00;
 }
 
 // This is the required format of an ISR routine for a
-// Hardware Pin Interupt.  Format is "PIN#_vect" where 
-// '#' is the number of the interupt...  PD0->0, PD1->1, etc
+// Hardware Pin Interrupt.  Format is "PIN#_vect" where 
+// '#' is the number of the interrupt...  PD0->0, PD1->1, etc.
 ISR(INT0_vect){
-	
-	// <TBD>  
-	
+
+	if (mode == zero)
+	{
+		next_led = 7;
+		mode = one;	
+	}		
+	else if (mode == one)
+	{
+		next_led = 0;
+		lock = 1;
+		mode = two;
+	}
+	else if (mode == two)
+	{
+		next_led = 0;
+		LEDS = 0xFF;
+		lock = 1;
+		mode = three;
+		sub_pattern_1 = 1;	
+		sub_pattern_2 = 0;
+	}
+	else if (mode == three)
+	{
+		next_led = 0;
+		mode = zero;
+	}	
 }
